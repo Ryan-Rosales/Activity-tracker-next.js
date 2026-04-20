@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useDragControls } from "framer-motion";
 import { Bot, Maximize2, Menu, Minimize2, MoreVertical, Pin, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { AISuggestions } from "@/components/ai/AISuggestions";
@@ -81,12 +81,21 @@ export function FloatingAIChat() {
   const notesByTaskId = useTaskNotesStore((state) => state.notesByTaskId);
   const addTask = useTaskStore((state) => state.addTask);
   const pushNotification = useNotificationStore((state) => state.pushNotification);
+  const migratedLocalConversationsRef = useRef(false);
 
   const serializeMessages = (items: ChatMessageType[]) =>
     items.map((message) => ({
       ...message,
       timestamp: new Date(message.timestamp).toISOString(),
     }));
+
+  const serializeConversationForApi = (conversation: Conversation) => ({
+    id: conversation.id,
+    title: conversation.title,
+    pinned: conversation.pinned,
+    updatedAt: conversation.updatedAt.toISOString(),
+    messages: serializeMessages(conversation.messages),
+  });
 
   const hydrateConversation = (conversation: {
     id: string;
@@ -110,6 +119,40 @@ export function FloatingAIChat() {
 
     const data = await response.json();
     const nextConversations: Conversation[] = (data.conversations ?? []).map(hydrateConversation);
+    const localConversations = conversations.filter(
+      (conversation) => conversation.id !== "conversation-initial" || conversation.messages.length > initial.length,
+    );
+
+    if (!nextConversations.length && localConversations.length && !migratedLocalConversationsRef.current) {
+      for (const conversation of localConversations) {
+        await fetch("/api/ai/conversations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(serializeConversationForApi(conversation)),
+        }).then(async (syncResponse) => {
+          await logConversationApiResponse("POST(local-migration)", syncResponse);
+        });
+      }
+
+      migratedLocalConversationsRef.current = true;
+
+      const refreshed = await fetch("/api/ai/conversations", { cache: "no-store" });
+      await logConversationApiResponse("GET(refreshed)", refreshed);
+      if (refreshed.ok) {
+        const refreshedData = await refreshed.json();
+        const refreshedConversations: Conversation[] = (refreshedData.conversations ?? []).map(hydrateConversation);
+        if (refreshedConversations.length) {
+          setConversations(refreshedConversations);
+          setActiveConversationId((prev) =>
+            refreshedConversations.some((conversation) => conversation.id === prev)
+              ? prev
+              : refreshedConversations[0].id,
+          );
+          return;
+        }
+      }
+    }
+
     if (!nextConversations.length) return;
 
     setConversations(nextConversations);

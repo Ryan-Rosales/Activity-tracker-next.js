@@ -3,6 +3,12 @@ import { NextResponse } from "next/server";
 import { runWithUserContext } from "@/lib/server/db";
 import type { ChatMessage } from "@/lib/types";
 import type { PoolClient } from "pg";
+import {
+  deleteConversationViaSupabase,
+  fetchConversationsViaSupabase,
+  getSupabaseDataClient,
+  upsertConversationViaSupabase,
+} from "@/lib/server/supabaseData";
 
 type ConversationRow = {
   id: string;
@@ -80,6 +86,8 @@ const fallbackConversationFromBody = (body: {
   title?: string;
   pinned?: boolean;
   messages?: Array<{ id: string; role: "user" | "assistant"; content: string; timestamp: string | Date }>;
+  createdAt?: string | Date;
+  updatedAt?: string | Date;
 }) => {
   const now = new Date();
   return {
@@ -90,8 +98,8 @@ const fallbackConversationFromBody = (body: {
       ...message,
       timestamp: new Date(message.timestamp),
     })),
-    createdAt: now,
-    updatedAt: now,
+    createdAt: body.createdAt ? new Date(body.createdAt) : now,
+    updatedAt: body.updatedAt ? new Date(body.updatedAt) : now,
   };
 };
 
@@ -128,15 +136,11 @@ export async function GET() {
     return NextResponse.json({ conversations });
   } catch (error) {
     if (isDatabaseUnavailableError(error)) {
-      return NextResponse.json(
-        {
-          conversations: [],
-          degraded: true,
-          warning: "Database unavailable. Using client-side conversation cache fallback.",
-          details: process.env.NODE_ENV === "production" ? undefined : (error instanceof Error ? error.message : "Unknown DB error"),
-        },
-        { status: 200 },
-      );
+      const email = await getEmail();
+      if (!email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+      const conversations = await fetchConversationsViaSupabase(email);
+      return NextResponse.json({ conversations });
     }
 
     return errorResponse(error);
@@ -153,8 +157,8 @@ export async function POST(request: Request) {
       await ensureAiConversationsTable(client);
 
       const result = await client.query(
-        `insert into public.ai_conversations (id, owner_email, title, pinned, messages)
-         values ($1, $2, $3, $4, $5)
+        `insert into public.ai_conversations (id, owner_email, title, pinned, messages, created_at, updated_at)
+         values ($1, $2, $3, $4, $5, $6, $7)
          on conflict (id) do update set
            title = excluded.title,
            pinned = excluded.pinned,
@@ -167,6 +171,8 @@ export async function POST(request: Request) {
           body.title ?? "New conversation",
           body.pinned ?? false,
           JSON.stringify(body.messages ?? []),
+          body.createdAt ? new Date(body.createdAt).toISOString() : new Date().toISOString(),
+          body.updatedAt ? new Date(body.updatedAt).toISOString() : new Date().toISOString(),
         ],
       );
 
@@ -181,17 +187,15 @@ export async function POST(request: Request) {
         title?: string;
         pinned?: boolean;
         messages?: Array<{ id: string; role: "user" | "assistant"; content: string; timestamp: string | Date }>;
+        createdAt?: string | Date;
+        updatedAt?: string | Date;
       };
 
-      return NextResponse.json(
-        {
-          conversation: fallbackConversationFromBody(body),
-          degraded: true,
-          warning: "Database unavailable. Conversation is stored client-side until DB recovers.",
-          details: process.env.NODE_ENV === "production" ? undefined : (error instanceof Error ? error.message : "Unknown DB error"),
-        },
-        { status: 200 },
-      );
+      const email = await getEmail();
+      if (!email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+      const conversation = await upsertConversationViaSupabase(email, body);
+      return NextResponse.json({ conversation });
     }
 
     return errorResponse(error);
@@ -233,21 +237,19 @@ export async function PATCH(request: Request) {
         title?: string;
         pinned?: boolean;
         messages?: Array<{ id: string; role: "user" | "assistant"; content: string; timestamp: string | Date }>;
+        createdAt?: string | Date;
+        updatedAt?: string | Date;
       };
 
       if (!body.id) {
         return NextResponse.json({ error: "Conversation id is required." }, { status: 400 });
       }
 
-      return NextResponse.json(
-        {
-          conversation: fallbackConversationFromBody(body),
-          degraded: true,
-          warning: "Database unavailable. Conversation update is applied client-side only.",
-          details: process.env.NODE_ENV === "production" ? undefined : (error instanceof Error ? error.message : "Unknown DB error"),
-        },
-        { status: 200 },
-      );
+      const email = await getEmail();
+      if (!email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+      const conversation = await upsertConversationViaSupabase(email, body);
+      return NextResponse.json({ conversation });
     }
 
     return errorResponse(error);
@@ -270,15 +272,16 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ ok: true });
   } catch (error) {
     if (isDatabaseUnavailableError(error)) {
-      return NextResponse.json(
-        {
-          ok: true,
-          degraded: true,
-          warning: "Database unavailable. Conversation delete was applied client-side only.",
-          details: process.env.NODE_ENV === "production" ? undefined : (error instanceof Error ? error.message : "Unknown DB error"),
-        },
-        { status: 200 },
-      );
+      const body = (await request.json().catch(() => ({}))) as { id?: string };
+      if (!body.id) {
+        return NextResponse.json({ error: "Conversation id is required." }, { status: 400 });
+      }
+
+      const email = await getEmail();
+      if (!email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+      await deleteConversationViaSupabase(email, body.id);
+      return NextResponse.json({ ok: true });
     }
 
     return errorResponse(error);

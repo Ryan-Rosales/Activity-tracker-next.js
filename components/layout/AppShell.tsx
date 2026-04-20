@@ -13,6 +13,32 @@ import { useTaskNotesStore } from "@/lib/store/useTaskNotesStore";
 import { useNotificationStore } from "@/lib/store/useNotificationStore";
 import { useSettingsStore } from "@/lib/store/useSettingsStore";
 import { useAuthStore } from "@/lib/store/useAuthStore";
+import type { Task } from "@/lib/types";
+import type { TaskNoteAttachment } from "@/lib/types/taskNotes";
+
+const serializeTaskForApi = (task: Task) => ({
+  id: task.id,
+  title: task.title,
+  description: task.description,
+  status: task.status,
+  priority: task.priority,
+  category: task.category,
+  dueDate: task.dueDate instanceof Date ? task.dueDate.toISOString() : task.dueDate,
+  completedAt: task.completedAt instanceof Date ? task.completedAt.toISOString() : task.completedAt,
+  archivedAt: task.archivedAt instanceof Date ? task.archivedAt.toISOString() : task.archivedAt,
+  createdAt: task.createdAt instanceof Date ? task.createdAt.toISOString() : task.createdAt,
+  updatedAt: task.updatedAt instanceof Date ? task.updatedAt.toISOString() : task.updatedAt,
+  subtasks: task.subtasks,
+});
+
+const serializeAttachmentForApi = (attachment: TaskNoteAttachment) => ({
+  id: attachment.id,
+  name: attachment.name,
+  type: attachment.type,
+  size: attachment.size,
+  uploadedAt: attachment.uploadedAt,
+  storagePath: attachment.storagePath,
+});
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -31,6 +57,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const hydrateSession = useAuthStore((state) => state.hydrateSession);
   const [mobileOpen, setMobileOpen] = useState(false);
   const hydratedEmail = useRef<string | null>(null);
+  const migratedEmail = useRef<string | null>(null);
 
   useEffect(() => {
     if (pathname === "/login") return;
@@ -47,47 +74,104 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
     hydratedEmail.current = email;
 
-    void fetch("/api/bootstrap")
-      .then((response) => response.json())
-      .then((data) => {
+    const localTasks = useTaskStore.getState().tasks;
+    const localNotesByTaskId = useTaskNotesStore.getState().notesByTaskId;
+    const localAttachmentsByTaskId = useTaskNotesStore.getState().attachmentsByTaskId;
+
+    void (async () => {
+      try {
+        const response = await fetch("/api/bootstrap");
+        const data = (await response.json()) as {
+          tasks?: Task[];
+          notesByTaskId?: Record<string, string>;
+          attachmentsByTaskId?: Record<string, TaskNoteAttachment[]>;
+          notifications?: Parameters<typeof setNotifications>[0];
+          settings?: {
+            overdueAlerts: boolean;
+            aiReminders: boolean;
+            weeklySummary: boolean;
+            accent: "violet" | "teal" | "sunset" | "emerald" | "rose";
+            themeMode: "system" | "light" | "dark";
+            sidebarCollapsed: boolean;
+            twoFactorEnabled: boolean;
+            displayName?: string;
+            email?: string;
+            avatar?: string | null;
+          };
+        };
+
+        if (!response.ok) return;
+
+        const hasServerTasks = Array.isArray(data.tasks) && data.tasks.length > 0;
+        if (!hasServerTasks && localTasks.length && migratedEmail.current !== email) {
+          for (const task of localTasks) {
+            await fetch("/api/tasks", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(serializeTaskForApi(task)),
+            });
+          }
+
+          for (const [taskId, note] of Object.entries(localNotesByTaskId)) {
+            const attachments = localAttachmentsByTaskId[taskId] ?? [];
+            await fetch("/api/task-notes", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                taskId,
+                note,
+                attachments: attachments.map(serializeAttachmentForApi),
+              }),
+            });
+          }
+
+          migratedEmail.current = email;
+
+          const refreshed = await fetch("/api/bootstrap");
+          if (refreshed.ok) {
+            data.tasks = (await refreshed.json())?.tasks ?? data.tasks;
+          }
+        }
+
         if (data.tasks) setTasks(data.tasks);
         if (data.notesByTaskId) setNotesByTaskId(data.notesByTaskId);
         if (data.attachmentsByTaskId) setAttachmentsByTaskId(data.attachmentsByTaskId);
         if (data.notifications) setNotifications(data.notifications);
         if (data.settings) {
+          const settings = data.settings;
           setNotificationSettings({
-            overdueAlerts: data.settings.overdueAlerts,
-            aiReminders: data.settings.aiReminders,
-            weeklySummary: data.settings.weeklySummary,
+            overdueAlerts: settings.overdueAlerts,
+            aiReminders: settings.aiReminders,
+            weeklySummary: settings.weeklySummary,
           });
           hydrateSettings({
-            accent: data.settings.accent,
-            themeMode: data.settings.themeMode,
-            sidebarCollapsed: data.settings.sidebarCollapsed,
-            overdueAlerts: data.settings.overdueAlerts,
-            aiReminders: data.settings.aiReminders,
-            weeklySummary: data.settings.weeklySummary,
-            twoFactorEnabled: data.settings.twoFactorEnabled,
-            displayName: data.settings.displayName,
-            email: data.settings.email,
-            avatar: data.settings.avatar,
+            accent: settings.accent,
+            themeMode: settings.themeMode,
+            sidebarCollapsed: settings.sidebarCollapsed,
+            overdueAlerts: settings.overdueAlerts,
+            aiReminders: settings.aiReminders,
+            weeklySummary: settings.weeklySummary,
+            twoFactorEnabled: settings.twoFactorEnabled,
+            displayName: settings.displayName,
+            email: settings.email,
+            avatar: settings.avatar ?? undefined,
           });
           useAuthStore.setState((state) => ({
             ...state,
             user: state.user
               ? {
                   ...state.user,
-                  name: data.settings.displayName ?? state.user.name,
-                  email: data.settings.email ?? state.user.email,
-                  avatar: data.settings.avatar ?? state.user.avatar,
+                  name: settings.displayName ?? state.user.name,
+                  email: settings.email ?? state.user.email,
+                  avatar: settings.avatar ?? state.user.avatar,
                 }
               : state.user,
           }));
         }
-      })
-      .catch(() => {
+      } catch {
         // Fall back to local cache if the database is unavailable.
-      });
+      }
+    })();
   }, [hydrateSettings, setAttachmentsByTaskId, setNotesByTaskId, setNotifications, setNotificationSettings, setTasks, user?.email]);
 
   if (pathname === "/login") {
