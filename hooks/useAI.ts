@@ -108,8 +108,12 @@ export function useAI() {
         setError(message);
 
         const normalized = message.toLowerCase();
-        const userFacingMessage = normalized.includes("quota") || normalized.includes("429")
-          ? "AI quota limit reached right now. Please try again shortly."
+        const userFacingMessage = normalized.includes("shared server key") || normalized.includes("provider capacity")
+          ? "AI provider is temporarily rate-limited for the server key. Your account budget is separate. Please try again shortly."
+          : normalized.includes("daily ai limit reached")
+            ? message
+            : normalized.includes("quota") || normalized.includes("429")
+              ? "AI provider quota is currently limited. Please try again shortly."
           : normalized.includes("api key") || normalized.includes("unauthorized") || normalized.includes("permission")
             ? "AI provider credentials are invalid or missing. Please check server configuration."
             : normalized.includes("model")

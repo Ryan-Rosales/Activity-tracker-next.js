@@ -83,6 +83,16 @@ const buildCacheKey = (system: string, prompt: string, mode: string) =>
 
 const getEmail = async () => (await cookies()).get("activity_user_email")?.value?.trim().toLowerCase() ?? "";
 
+const isProviderQuotaError = (errorMessage: string) => {
+  const normalized = errorMessage.toLowerCase();
+  return (
+    normalized.includes("quota") ||
+    normalized.includes("rate limit") ||
+    normalized.includes("resource_exhausted") ||
+    normalized.includes("429")
+  );
+};
+
 const buildUserPrompt = (body: Body) => {
   const action = body.action ?? "summarize";
   const taskTitle = body.taskTitle ?? "Untitled task";
@@ -337,6 +347,14 @@ const callOpenAI = async ({
 
 export async function POST(request: Request) {
   try {
+    const email = await getEmail();
+    if (!email) {
+      return NextResponse.json(
+        { reply: "Please sign in again before using AI so usage can be tracked to your account." },
+        { status: 401 },
+      );
+    }
+
     const body = (await request.json()) as Body;
     const messages = body.messages ?? [];
     const last = body.note?.trim() || messages[messages.length - 1]?.content || "";
@@ -346,8 +364,11 @@ export async function POST(request: Request) {
     }
 
     const geminiKey = process.env.GEMINI_API_KEY;
+    const geminiFallbackKey = process.env.GEMINI_API_KEY_FALLBACK;
     const geminiChatModel = process.env.GEMINI_CHAT_MODEL || "gemini-2.5-flash-lite";
     const geminiActionModel = process.env.GEMINI_ACTION_MODEL || process.env.GEMINI_MODEL || "gemini-2.5-flash";
+    const geminiFallbackChatModel = process.env.GEMINI_FALLBACK_CHAT_MODEL || "gemini-2.5-flash";
+    const geminiFallbackActionModel = process.env.GEMINI_FALLBACK_ACTION_MODEL || geminiFallbackChatModel;
     const openAiKey = process.env.OPENAI_API_KEY;
     const openAiChatModel = process.env.OPENAI_CHAT_MODEL || "gpt-4o-mini";
     const openAiActionModel = process.env.OPENAI_ACTION_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini";
@@ -356,7 +377,7 @@ export async function POST(request: Request) {
       ? toTokenLimit(process.env.AI_CHAT_MAX_OUTPUT_TOKENS, 320)
       : toTokenLimit(process.env.AI_NOTE_MAX_OUTPUT_TOKENS, 420);
 
-    if (!geminiKey && !openAiKey) {
+    if (!geminiKey && !geminiFallbackKey && !openAiKey) {
       return NextResponse.json({ error: "No AI provider API key is configured." }, { status: 503 });
     }
 
@@ -370,18 +391,15 @@ export async function POST(request: Request) {
       return NextResponse.json(cached.payload);
     }
 
-    const email = await getEmail();
-    if (email) {
-      const usageCheck = await consumeDailyRequest(email);
-      if (!usageCheck.allowed) {
-        return NextResponse.json(
-          {
-            reply: `Daily AI limit reached for this account (${usageCheck.snapshot.dailyBudget} requests). Try again after reset or increase your limit in Settings.`,
-            usage: usageCheck.snapshot,
-          },
-          { status: 429 },
-        );
-      }
+    const usageCheck = await consumeDailyRequest(email);
+    if (!usageCheck.allowed) {
+      return NextResponse.json(
+        {
+          reply: `Daily AI limit reached for this account (${usageCheck.snapshot.dailyBudget} requests). Try again after reset or increase your limit in Settings.`,
+          usage: usageCheck.snapshot,
+        },
+        { status: 429 },
+      );
     }
 
     let providerResult: ProviderResult | null = null;
@@ -397,6 +415,20 @@ export async function POST(request: Request) {
           result = await callGemini({
             apiKey: geminiKey,
             model: isChatMode ? geminiChatModel : geminiActionModel,
+            system: activeSystemPrompt,
+            prompt,
+            maxOutputTokens,
+          });
+        }
+
+        if (
+          (!result || !result.ok) &&
+          geminiFallbackKey &&
+          (!geminiKey || isProviderQuotaError(result?.error ?? ""))
+        ) {
+          result = await callGemini({
+            apiKey: geminiFallbackKey,
+            model: isChatMode ? geminiFallbackChatModel : geminiFallbackActionModel,
             system: activeSystemPrompt,
             prompt,
             maxOutputTokens,
@@ -422,6 +454,17 @@ export async function POST(request: Request) {
     }
 
     if (!providerResult || !providerResult.ok || !providerResult.text.trim()) {
+      if (isProviderQuotaError(providerResult?.error ?? "")) {
+        return NextResponse.json(
+          {
+            reply:
+              "AI provider capacity for the shared server key is currently exhausted. This is separate from your per-account daily budget. Try again shortly or switch to another provider key.",
+            error: providerResult?.error,
+          },
+          { status: 503 },
+        );
+      }
+
       return NextResponse.json(
         { error: providerResult?.error || "AI provider returned an empty response." },
         { status: 502 },
