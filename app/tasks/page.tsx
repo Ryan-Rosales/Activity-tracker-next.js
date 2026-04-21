@@ -143,12 +143,12 @@ export default function TasksPage() {
         <TaskModal
           task={editing}
           onClose={() => setOpen(false)}
-          onSave={(draft) => {
+          onSave={async (draft) => {
             if (editing) {
               updateTask(editing.id, draft);
               return;
             }
-            addTask(draft);
+            await addTask(draft);
           }}
         />
       ) : null}
@@ -159,20 +159,28 @@ export default function TasksPage() {
           note={notesByTaskId[notesTask.id] ?? ""}
           attachments={attachmentsByTaskId[notesTask.id] ?? []}
           onClose={() => setNotesTask(null)}
-          onSave={({ note, attachments }) => {
+          onSave={async ({ note, attachments }) => {
             setTaskNote(notesTask.id, note);
             setTaskAttachments(notesTask.id, attachments);
-            void fetch("/api/task-notes", {
+            const response = await fetch("/api/task-notes", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ taskId: notesTask.id, note, attachments }),
             });
+
+            const data = (await response.json().catch(() => null)) as { storage?: "postgres" | "supabase" | "memory" } | null;
+            if (!response.ok) {
+              throw new Error("Could not save task notes.");
+            }
+
             pushNotification({
               type: "update",
               message: `Notes saved: ${notesTask.title}`,
               taskId: notesTask.id,
               taskTitle: notesTask.title,
             });
+
+            return { storage: data?.storage ?? "postgres" };
           }}
         />
       ) : null}

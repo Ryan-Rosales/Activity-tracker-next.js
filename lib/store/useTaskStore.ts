@@ -8,7 +8,7 @@ import { useNotificationStore } from "@/lib/store/useNotificationStore";
 interface TaskStore {
   tasks: Task[];
   setTasks: (tasks: Task[]) => void;
-  addTask: (task: Omit<Task, "id" | "createdAt" | "updatedAt">) => void;
+  addTask: (task: Omit<Task, "id" | "createdAt" | "updatedAt">) => Promise<Task>;
   updateTask: (id: string, updates: Partial<Task>) => void;
   deleteTask: (id: string) => void;
   moveTask: (id: string, status: TaskStatus) => void;
@@ -56,7 +56,7 @@ export const useTaskStore = create<TaskStore>()(
     (set, get) => ({
       tasks: [],
       setTasks: (tasks) => set({ tasks }),
-      addTask: (task) => {
+      addTask: async (task) => {
         const now = new Date();
         const createdTask = {
           ...task,
@@ -79,11 +79,17 @@ export const useTaskStore = create<TaskStore>()(
           taskTitle: createdTask.title,
         });
 
-        void fetch("/api/tasks", {
+        const response = await fetch("/api/tasks", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(createdTask),
         });
+
+        if (!response.ok) {
+          throw new Error("Failed to save task.");
+        }
+
+        return createdTask;
       },
       updateTask: (id, updates) => {
         const existing = get().tasks.find((task) => task.id === id);

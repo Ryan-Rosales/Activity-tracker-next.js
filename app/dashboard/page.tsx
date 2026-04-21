@@ -88,8 +88,8 @@ export default function DashboardPage() {
       {open ? (
         <TaskModal
           onClose={() => setOpen(false)}
-          onSave={(draft) => {
-            addTask(draft);
+          onSave={async (draft) => {
+            await addTask(draft);
           }}
         />
       ) : null}

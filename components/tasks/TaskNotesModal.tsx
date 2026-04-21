@@ -40,7 +40,7 @@ type TaskNotesModalProps = {
   note: string;
   attachments: TaskNoteAttachment[];
   onClose: () => void;
-  onSave: (payload: { note: string; attachments: TaskNoteAttachment[] }) => void;
+  onSave: (payload: { note: string; attachments: TaskNoteAttachment[] }) => Promise<{ storage?: "postgres" | "supabase" | "memory" } | void> | void;
 };
 
 type AiActionKey = "extract" | "summarize" | "tone" | "advice" | "draft";
@@ -236,6 +236,8 @@ export function TaskNotesModal({ task, note, attachments: initialAttachments, on
   const [textPreviewStatus, setTextPreviewStatus] = useState<"idle" | "loading" | "error">("idle");
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const [isUploadingFiles, setIsUploadingFiles] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [cloudState, setCloudState] = useState<"idle" | "saving" | "postgres" | "supabase" | "memory" | "error">("idle");
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -697,6 +699,58 @@ export function TaskNotesModal({ task, note, attachments: initialAttachments, on
     })();
   };
 
+  const cloudBadgeLabel =
+    cloudState === "postgres"
+      ? "Saved to cloud"
+      : cloudState === "supabase"
+        ? "Saved to cloud fallback"
+        : cloudState === "memory"
+          ? "Saved locally"
+          : cloudState === "saving"
+            ? "Saving to cloud..."
+            : "Not saved yet";
+
+  const cloudBadgeClass =
+    isLight
+      ? cloudState === "postgres"
+        ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+        : cloudState === "supabase"
+          ? "border-amber-300 bg-amber-50 text-amber-700"
+          : cloudState === "memory"
+            ? "border-slate-300 bg-slate-100 text-slate-700"
+            : cloudState === "saving"
+              ? "border-violet-300 bg-violet-50 text-violet-700"
+              : "border-slate-300 bg-white text-slate-600"
+      : cloudState === "postgres"
+        ? "border-emerald-300/40 bg-emerald-500/15 text-emerald-100"
+        : cloudState === "supabase"
+          ? "border-amber-300/40 bg-amber-500/15 text-amber-100"
+          : cloudState === "memory"
+            ? "border-white/15 bg-white/5 text-slate-300"
+            : cloudState === "saving"
+              ? "border-violet-300/40 bg-violet-500/15 text-violet-100"
+              : "border-white/15 bg-white/5 text-slate-300";
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    setCloudState("saving");
+
+    try {
+      const result = await Promise.resolve(onSave({ note: serializeNoteWithAiBlocks(userText, aiEntries), attachments }));
+      const storage = result && typeof result === "object" && "storage" in result ? result.storage : undefined;
+      setCloudState(storage ?? "postgres");
+      setStatusMessage(storage === "supabase" ? "Saved to cloud fallback." : "Saved to cloud.");
+    } catch {
+      setCloudState("error");
+      setStatusMessage("Save failed. Please try again.");
+      return;
+    } finally {
+      setIsSaving(false);
+    }
+
+    onClose();
+  };
+
   return (
     <>
       <div className="fixed inset-0 z-[260] grid place-items-center bg-black/60 p-2 sm:p-4">
@@ -713,6 +767,9 @@ export function TaskNotesModal({ task, note, attachments: initialAttachments, on
           <div>
             <h3 className={`text-lg font-semibold ${isLight ? "text-slate-900" : "text-white"}`}>Task Notepad</h3>
             <p className={`mt-1 text-sm ${isLight ? "text-slate-600" : "text-slate-300"}`}>{task.title}</p>
+            <div className={`mt-2 inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold ${cloudBadgeClass}`}>
+              {cloudBadgeLabel}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -1162,12 +1219,12 @@ export function TaskNotesModal({ task, note, attachments: initialAttachments, on
           <div className="flex flex-wrap gap-2">
             <GradientButton
               type="button"
+              disabled={isSaving}
               onClick={() => {
-                onSave({ note: serializeNoteWithAiBlocks(userText, aiEntries), attachments });
-                onClose();
+                void handleSave();
               }}
             >
-              Save Notes
+              {isSaving ? "Saving..." : "Save Notes"}
             </GradientButton>
           </div>
         </div>

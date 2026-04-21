@@ -454,7 +454,7 @@ export function ChatWindow() {
     if (result.action?.type === "CREATE_TASK") {
       const task = result.action.task as Partial<Task>;
       if (task.title) {
-        addTask({
+        await addTask({
           title: task.title,
           description: task.description,
           status: "pending",

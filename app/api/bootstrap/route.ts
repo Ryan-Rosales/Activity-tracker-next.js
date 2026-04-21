@@ -5,6 +5,7 @@ import { mapNotificationRow, mapSettingsRow, mapTaskRow } from "@/lib/server/map
 import { ensureTaskNotesTable, selectTaskNotesPayload } from "@/lib/server/taskNotesDb";
 import { fetchConversationsViaSupabase, fetchNotificationsViaSupabase, fetchTasksViaSupabase } from "@/lib/server/supabaseData";
 import { fetchSettingsViaRest } from "@/lib/server/supabaseSettings";
+import { fetchTaskNotesViaRest } from "@/lib/server/supabaseTaskNotes";
 
 const getEmail = async () => (await cookies()).get("activity_user_email")?.value?.trim().toLowerCase() ?? "";
 
@@ -56,11 +57,12 @@ export async function GET() {
 
     return NextResponse.json(payload);
   } catch {
-    const [tasks, notifications, settings, conversations] = await Promise.all([
+    const [tasks, notifications, settings, conversations, taskNotes] = await Promise.all([
       fetchTasksViaSupabase(email),
       fetchNotificationsViaSupabase(email),
       fetchSettingsViaRest(email),
       fetchConversationsViaSupabase(email),
+      fetchTaskNotesViaRest(email),
     ]);
 
     return NextResponse.json({
@@ -68,8 +70,8 @@ export async function GET() {
       notifications,
       settings,
       conversations,
-      notesByTaskId: {},
-      attachmentsByTaskId: {},
+      notesByTaskId: taskNotes.notesByTaskId,
+      attachmentsByTaskId: taskNotes.attachmentsByTaskId,
     });
   }
 }

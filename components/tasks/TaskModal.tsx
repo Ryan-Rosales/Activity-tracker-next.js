@@ -30,10 +30,11 @@ export function TaskModal({
   task,
 }: {
   onClose: () => void;
-  onSave: (draft: Omit<Task, "id" | "createdAt" | "updatedAt">) => void;
+  onSave: (draft: Omit<Task, "id" | "createdAt" | "updatedAt">) => Promise<void> | void;
   task?: Task | null;
 }) {
   const [draft, setDraft] = useState<Draft>(defaultDraft);
+  const [saving, setSaving] = useState(false);
   const mode = useThemeStore((state) => state.mode);
   const isLight = mode === "light";
   const dueState = getDueDateState(draft.dueDate ? new Date(draft.dueDate) : undefined);
@@ -187,20 +188,28 @@ export function TaskModal({
           </button>
           <GradientButton
             type="button"
-            onClick={() => {
+            disabled={saving}
+            onClick={async () => {
               if (!draft.title.trim()) return;
-              onSave({
-                title: draft.title,
-                description: draft.description || undefined,
-                status: task?.status ?? "pending",
-                priority: draft.priority,
-                category: draft.category || undefined,
-                dueDate: draft.dueDate ? new Date(draft.dueDate) : undefined,
-              });
-              onClose();
+              setSaving(true);
+              try {
+                await Promise.resolve(
+                  onSave({
+                    title: draft.title,
+                    description: draft.description || undefined,
+                    status: task?.status ?? "pending",
+                    priority: draft.priority,
+                    category: draft.category || undefined,
+                    dueDate: draft.dueDate ? new Date(draft.dueDate) : undefined,
+                  }),
+                );
+                onClose();
+              } finally {
+                setSaving(false);
+              }
             }}
           >
-            Save Task
+            {saving ? "Saving..." : "Save Task"}
           </GradientButton>
         </div>
       </motion.div>

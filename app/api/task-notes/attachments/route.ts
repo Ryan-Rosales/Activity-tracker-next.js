@@ -9,6 +9,10 @@ import {
   ensureTaskNotesBucket,
   getSupabaseStorageClient,
 } from "@/lib/server/supabaseStorage";
+import {
+  appendTaskNoteAttachmentViaRest,
+  removeTaskNoteAttachmentViaRest,
+} from "@/lib/server/supabaseTaskNotes";
 import type { TaskNoteAttachment } from "@/lib/types/taskNotes";
 
 export const runtime = "nodejs";
@@ -74,7 +78,14 @@ const syncAttachmentMetadataBestEffort = async (email: string, taskId: string, a
     });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown";
-    console.warn("Skipping task_notes metadata sync after storage upload:", reason);
+    console.warn("Skipping direct task_notes metadata sync after storage upload:", reason);
+
+    try {
+      await appendTaskNoteAttachmentViaRest({ email, taskId, attachment });
+    } catch (restError) {
+      const restReason = restError instanceof Error ? restError.message : "unknown";
+      console.warn("Skipping Supabase task_notes metadata sync after storage upload:", restReason);
+    }
   }
 };
 
@@ -107,7 +118,14 @@ const removeAttachmentMetadataBestEffort = async (email: string, taskId: string,
     });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown";
-    console.warn("Skipping task_notes metadata removal after storage delete:", reason);
+    console.warn("Skipping direct task_notes metadata removal after storage delete:", reason);
+
+    try {
+      await removeTaskNoteAttachmentViaRest({ email, taskId, attachmentId });
+    } catch (restError) {
+      const restReason = restError instanceof Error ? restError.message : "unknown";
+      console.warn("Skipping Supabase task_notes metadata removal after storage delete:", restReason);
+    }
   }
 };
 
