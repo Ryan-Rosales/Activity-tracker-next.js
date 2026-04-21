@@ -62,7 +62,7 @@ export async function GET() {
       fetchNotificationsViaSupabase(email),
       fetchSettingsViaRest(email),
       fetchConversationsViaSupabase(email),
-      fetchTaskNotesViaRest(email),
+      fetchTaskNotesViaRest(email).catch(() => ({ notesByTaskId: {}, attachmentsByTaskId: {} })),
     ]);
 
     return NextResponse.json({

@@ -6,7 +6,6 @@ import type { PoolClient } from "pg";
 import {
   deleteConversationViaSupabase,
   fetchConversationsViaSupabase,
-  getSupabaseDataClient,
   upsertConversationViaSupabase,
 } from "@/lib/server/supabaseData";
 
@@ -26,7 +25,12 @@ const isDatabaseUnavailableError = (error: unknown) => {
   return (
     message.includes("ENOTFOUND") ||
     message.includes("ECONNREFUSED") ||
+    message.includes("ECONNRESET") ||
     message.includes("ETIMEDOUT") ||
+    message.includes("timeout") ||
+    message.includes("connect") ||
+    message.includes("terminated unexpectedly") ||
+    message.includes("could not connect") ||
     message.includes("DATABASE_URL")
   );
 };
@@ -78,28 +82,6 @@ const toConversation = (row: ConversationRow) => {
     messages,
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
-  };
-};
-
-const fallbackConversationFromBody = (body: {
-  id?: string;
-  title?: string;
-  pinned?: boolean;
-  messages?: Array<{ id: string; role: "user" | "assistant"; content: string; timestamp: string | Date }>;
-  createdAt?: string | Date;
-  updatedAt?: string | Date;
-}) => {
-  const now = new Date();
-  return {
-    id: body.id ?? crypto.randomUUID(),
-    title: body.title ?? "New conversation",
-    pinned: body.pinned ?? false,
-    messages: (body.messages ?? []).map((message) => ({
-      ...message,
-      timestamp: new Date(message.timestamp),
-    })),
-    createdAt: body.createdAt ? new Date(body.createdAt) : now,
-    updatedAt: body.updatedAt ? new Date(body.updatedAt) : now,
   };
 };
 

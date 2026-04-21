@@ -13,7 +13,12 @@ const isDatabaseUnavailableError = (error: unknown) => {
   return (
     message.includes("ENOTFOUND") ||
     message.includes("ECONNREFUSED") ||
+    message.includes("ECONNRESET") ||
     message.includes("ETIMEDOUT") ||
+    message.includes("timeout") ||
+    message.includes("connect") ||
+    message.includes("terminated unexpectedly") ||
+    message.includes("could not connect") ||
     message.includes("DATABASE_URL")
   );
 };

@@ -211,32 +211,36 @@ export const useAuthStore = create<AuthState>()(
         }
       },
       hydrateSession: async () => {
-        const response = await fetch("/api/auth/session", { cache: "no-store" });
-        if (!response.ok) {
+        try {
+          const response = await fetch("/api/auth/session", { cache: "no-store" });
+          if (!response.ok) {
+            set({ user: null, isAuthenticated: false });
+            return;
+          }
+
+          const data = await readJsonSafe(response);
+          const userData = data.user as { email?: string; name?: string; avatar?: string | null } | undefined;
+          if (!userData?.email) {
+            set({ user: null, isAuthenticated: false });
+            return;
+          }
+
+          const existingAvatar = get().user?.avatar ?? "";
+
+          const user: User = {
+            name: userData.name ?? userData.email.split("@")[0] ?? "User",
+            email: userData.email,
+            avatar: typeof userData.avatar === "string" ? userData.avatar : existingAvatar,
+          };
+
+          if (shouldResetScopedData(get().user?.email, user.email)) {
+            clearClientScopedData();
+          }
+          setUserEmailCookie(user.email);
+          set({ user, isAuthenticated: true });
+        } catch {
           set({ user: null, isAuthenticated: false });
-          return;
         }
-
-        const data = await readJsonSafe(response);
-        const userData = data.user as { email?: string; name?: string; avatar?: string | null } | undefined;
-        if (!userData?.email) {
-          set({ user: null, isAuthenticated: false });
-          return;
-        }
-
-        const existingAvatar = get().user?.avatar ?? "";
-
-        const user: User = {
-          name: userData.name ?? userData.email.split("@")[0] ?? "User",
-          email: userData.email,
-          avatar: typeof userData.avatar === "string" ? userData.avatar : existingAvatar,
-        };
-
-        if (shouldResetScopedData(get().user?.email, user.email)) {
-          clearClientScopedData();
-        }
-        setUserEmailCookie(user.email);
-        set({ user, isAuthenticated: true });
       },
     }),
     {

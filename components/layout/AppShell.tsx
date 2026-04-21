@@ -60,7 +60,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (pathname === "/login") return;
-    void hydrateSession();
+    void hydrateSession().catch(() => {
+      // Session hydration failures should degrade to signed-out state.
+    });
   }, [hydrateSession, pathname]);
 
   useEffect(() => {

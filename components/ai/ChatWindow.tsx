@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Bot, ChevronLeft, ChevronRight, Menu, MoreVertical, Pin, Plus, Trash2 } from "lucide-react";
 import { ChatInput } from "@/components/ai/ChatInput";
@@ -57,6 +57,7 @@ const initial: ChatMessageType[] = [
 ];
 
 export function ChatWindow() {
+  const loadingConversationsRef = useRef(false);
   const [mounted, setMounted] = useState(false);
   const expanded = true;
   const [showConversations, setShowConversations] = useState(true);
@@ -106,20 +107,29 @@ export function ChatWindow() {
   });
 
   const loadConversations = async () => {
-    const response = await fetch("/api/ai/conversations", { cache: "no-store" });
-    await logConversationApiResponse("GET", response);
-    if (!response.ok) return;
+    if (loadingConversationsRef.current) return;
+    loadingConversationsRef.current = true;
 
-    const data = await response.json();
-    const nextConversations: Conversation[] = (data.conversations ?? []).map(hydrateConversation);
-    if (!nextConversations.length) return;
+    try {
+      const response = await fetch("/api/ai/conversations", { cache: "no-store" });
+      await logConversationApiResponse("GET", response);
+      if (!response.ok) return;
 
-    setConversations(nextConversations);
-    setActiveConversationId((prev) =>
-      nextConversations.some((conversation) => conversation.id === prev)
-        ? prev
-        : nextConversations[0].id,
-    );
+      const data = await response.json();
+      const nextConversations: Conversation[] = (data.conversations ?? []).map(hydrateConversation);
+      if (!nextConversations.length) return;
+
+      setConversations(nextConversations);
+      setActiveConversationId((prev) =>
+        nextConversations.some((conversation) => conversation.id === prev)
+          ? prev
+          : nextConversations[0].id,
+      );
+    } catch {
+      // Preserve existing in-memory/cache state if network fetch fails.
+    } finally {
+      loadingConversationsRef.current = false;
+    }
   };
 
   const readConversationsCache = () => {

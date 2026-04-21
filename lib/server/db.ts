@@ -15,6 +15,8 @@ export const pool =
   new Pool({
     connectionString,
     ssl: { rejectUnauthorized: false },
+    // Prevent long hangs when DATABASE_URL points to an unreachable host.
+    connectionTimeoutMillis: Number(process.env.PG_CONNECTION_TIMEOUT_MS ?? 3000),
   });
 
 if (!globalForDb.pool) {
